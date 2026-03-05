@@ -29,18 +29,73 @@ int timeHigh;
 int timeLow; 
 
 //other constants
-#define TIMEOUT 10
+#define LOOP_DELAY 10
+#define TIMEOUT 200
 
 /**
  * defines an interrupt that will force the Trigger Pin low
+ * @arg void 
+ * @returns void 
  */
 void IRAM_ATTR oneshotTimerHandler(void *arg){
     gpio_set_level(TRIGGER, 0);
 }
 
 /**
- * defines an interrupt that will assign the current distance ffrom the sensor to a nearby object
+ * defines a function that will move the left wheels and right wheels forward
+ * @arg void
+ * @returns void 
+ */
+void carForward(void){
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_LEFT, LEDC_DUTY_MAX);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_LEFT);   
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_MIN);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT);
+}
+/**
+ * defines a function that will stop the car
+ * @arg void
+ * @returns void
+ */
+void carStop(void){
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_LEFT, LEDC_DUTY_STOPPED);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_LEFT);   
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_STOPPED);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT);
+}
+
+/**
+ * Defines a function that will turn the car left by utilizing a "tank turn" where the left wheel
+ * moves backward while the right wheel moves forward
+ * @arg void
+ * @returns void
+ */
+void carLeft(void){
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_LEFT, LEDC_DUTY_MIN);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_LEFT);   
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_MAX);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT);
+}
+/**
+ * Defines a function that will turn the car left by utilizing a "tank turn" where the Right wheel
+ * moves backward while the left wheel moves forward
+ * @arg void
+ * @returns void
+ */
+void carRight(void){
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_LEFT, LEDC_DUTY_MAX);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_LEFT);   
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_MIN);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT);
+
+}
+
+/**
+ * defines an interrupt that will assign the current distance from the sensor to a nearby object
  * by taking the pulse width and defining it by a conversion factor
+ * 
+ * @arg void
+ * @returns void 
  */
 void IRAM_ATTR distanceSensorHandler(void *arg){
     bool SensorLevel = gpio_get_level(ECHO);
@@ -90,38 +145,50 @@ void ledcInit(void){
     ledc_channel_config(&ledcChannelRight);
     ledc_timer_config(&ledcTimer);
 }
-
-void app_main(void){
-    ledcInit();
+/**
+ * defines a function that will initalize the reading of the keyboard input
+ * @returns void
+ * @arg void
+ */
+void serialCommunicationInit(void){
     usb_serial_jtag_driver_config_t usbConfig = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&usbConfig);
     esp_vfs_usb_serial_jtag_use_driver(); 
+}
+
+void app_main(void){
+    ledcInit();
+    serialCommunicationInit();
+    int UserInput = 0;
     int buffer[1];
-    char lastKey = '\n';
+    int lastKey = 0;
     while(1){
-        buffer[0] = 0;
-        usb_serial_jtag_read_bytes(buffer, sizeof(buffer), 10);
-        if (lastKey != buffer[0]){
-            buffer[0] = 0;
-            usb_serial_jtag_read_bytes(buffer, sizeof(buffer), 10);
+        UserInput = usb_serial_jtag_read_bytes(buffer, 1, 0);
+        int timeRun = esp_timer_get_time() / 1000; // checks to see when the last key press is in milliseconds
+        if (UserInput > 0){
+            if (buffer[0] == 'w' || buffer[0] == 'W'){
+                carForward();
+                lastKey = timeRun;
+            }
+            else if (buffer[0] == 'a' || buffer[0] == 'A'){
+                carLeft();
+                lastKey = timeRun;
+            }
+            else if (buffer[0] == 's' || buffer[0] == 'S'){
+                carBackward();
+                lastKey = timeRun;
+            }
+            else if (buffer[0] == 'd' || buffer[0] == 'D'){
+                carRight();
+                lastKey = timeRun;
+            }
         }
-        if (buffer[0] == 'w' || buffer[0] == 'W'){
-                ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_LEFT, LEDC_DUTY_MAX);
-                ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_LEFT);   
-                ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_MIN);
-                ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT);
-                printf("%c\n", buffer[0]);
-                lastKey = buffer[0];
+        if (timeRun - lastKey > TIMEOUT){
+            // if the time since the last key is > timeout then forcefully stop the car
+            //NTS: once the distnace sensor is coded
+            carStop();
         }
-        else if (buffer[0] != 'w'){
-            ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_LEFT, LEDC_DUTY_STOPPED);
-            ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_LEFT);   
-            ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_STOPPED);
-            ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT);
-            printf("null\n");
-            lastKey = buffer[0];
-        }
-        vTaskDelay(25 / portTICK_PERIOD_MS);
+        vTaskDelay(LOOP_DELAY / portTICK_PERIOD_MS);
         }
     }
 
