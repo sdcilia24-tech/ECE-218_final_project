@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <driver/ledc.h>
 #include <freertos/FreeRTOS.h>
-#include <intr_types.h>
+#include <esp_intr_types.h>
 #include <esp_timer.h>
 #include <driver/gpio.h>
 #include <esp_vfs_dev.h>
@@ -21,16 +21,19 @@
 #define LEDC_DUTY_MAX 922
 
 //distance sensor
-#define TRIGGER GPIO_NUM_11
-#define ECHO GPIO_NUM_12
+#define TRIGGER 11
+#define ECHOPIN 12
+#define ALARM GPIO_NUM_8
+#define distanceThreshold 20
 esp_timer_handle_t oneshotTimer;
 int pulseWidth = 0;
-int timeHigh;
-int timeLow; 
+int timeHigh = 0;
+int timeLow = 0; 
+#define CONVFACTOR 58
 
 //other constants
-#define LOOP_DELAY 10
-#define TIMEOUT 200
+#define LOOP_DELAY 25
+#define TIMEOUT 550
 
 /**
  * defines an interrupt that will force the Trigger Pin low
@@ -52,6 +55,19 @@ void carForward(void){
     ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_MIN);
     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT);
 }
+
+/**
+ * defines a function that will move the left wheels and right wheels in reverse
+ * @arg void
+ * @returns void 
+ */
+void carBackward(void){
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_LEFT, LEDC_DUTY_MIN);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_LEFT);   
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_MAX);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT);
+}
+
 /**
  * defines a function that will stop the car
  * @arg void
@@ -98,14 +114,14 @@ void carRight(void){
  * @returns void 
  */
 void IRAM_ATTR distanceSensorHandler(void *arg){
-    bool SensorLevel = gpio_get_level(ECHO);
+    bool SensorLevel = gpio_get_level(ECHOPIN);
     if (SensorLevel){
         timeHigh = esp_timer_get_time();
     }
     if (!SensorLevel){
         timeLow = esp_timer_get_time();
         pulseWidth = timeLow - timeHigh;
-        pulseWidth /= 58;
+        pulseWidth /= CONVFACTOR;
     }
 }
 
@@ -129,7 +145,7 @@ void ledcInit(void){
         .timer_sel = LEDC_TIMER,
         .intr_type = LEDC_INTR_DISABLE,
         .gpio_num = LEFT_WHEELS_IO,
-        .duty = 0,
+        .duty = LEDC_DUTY_STOPPED,
         .hpoint = 0
     };
     ledc_channel_config_t ledcChannelRight = {
@@ -138,54 +154,86 @@ void ledcInit(void){
         .timer_sel = LEDC_TIMER,
         .intr_type = LEDC_INTR_DISABLE,
         .gpio_num = RIGHT_WHEELS_IO,
-        .duty = 0,
+        .duty = LEDC_DUTY_STOPPED,
         .hpoint = 0
     };
     ledc_channel_config(&ledcChannelLeft);
     ledc_channel_config(&ledcChannelRight);
     ledc_timer_config(&ledcTimer);
 }
-/**
- * defines a function that will initalize the reading of the keyboard input
- * @returns void
- * @arg void
- */
-void serialCommunicationInit(void){
-    usb_serial_jtag_driver_config_t usbConfig = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-    usb_serial_jtag_driver_install(&usbConfig);
-    esp_vfs_usb_serial_jtag_use_driver(); 
+
+void distanceSensorInit(){
+    gpio_reset_pin(TRIGGER);
+    gpio_set_direction(TRIGGER, GPIO_MODE_OUTPUT);
+    gpio_set_level(TRIGGER, 0);
+
+    gpio_reset_pin(ECHOPIN);
+    gpio_set_direction(ECHOPIN, GPIO_MODE_INPUT);
+    gpio_set_intr_type(ECHOPIN, GPIO_INTR_ANYEDGE);
+    gpio_intr_enable(ECHOPIN);
+    gpio_install_isr_service(0);
+
+    gpio_isr_handler_add(ECHOPIN, &distanceSensorHandler, NULL);
+
+    const esp_timer_create_args_t oneshot_timer_args = {
+        .callback = &oneshotTimerHandler,
+        .name = "one-shot"
+    };
+    esp_timer_create(&oneshot_timer_args, &oneshotTimer);
 }
 
 void app_main(void){
     ledcInit();
-    serialCommunicationInit();
-    int UserInput = 0;
-    int buffer[1];
+    distanceSensorInit();
+    usb_serial_jtag_driver_config_t usbConfig = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    usb_serial_jtag_driver_install(&usbConfig);
+    esp_vfs_usb_serial_jtag_use_driver();
+    int input;
     int lastKey = 0;
+    int errorCheck = 0;
     while(1){
-        UserInput = usb_serial_jtag_read_bytes(buffer, 1, 0);
-        int timeRun = esp_timer_get_time() / 1000; // checks to see when the last key press is in milliseconds
-        if (UserInput > 0){
-            if (buffer[0] == 'w' || buffer[0] == 'W'){
+        int currentData = usb_serial_jtag_read_bytes(&input, 1, 0);
+        uint64_t timeRun = esp_timer_get_time() / 1000; // checks to see when the last key press is in milliseconds
+        esp_timer_start_once(oneshotTimer, 1e-6);
+        gpio_set_level(TRIGGER, 1);
+        printf("%d\n", pulseWidth);
+        /*
+        if (pulseWidth < distanceThreshold){
+            errorCheck++;
+            if (errorCheck > 10){
+                carStop();
+                gpio_set_level(ALARM, 1);
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                gpio_set_level(ALARM, 0);
+                if (pulseWidth < distanceThreshold + 10){
+                        carBackward();
+                    vTaskDelay(250 / portTICK_PERIOD_MS);
+                }
+            }
+        }
+        else{
+            errorCheck = 0;
+        }
+         */
+        if (currentData > 0){
+            lastKey = timeRun;
+            if (input == 'w' || input == 'W'){
                 carForward();
-                lastKey = timeRun;
             }
-            else if (buffer[0] == 'a' || buffer[0] == 'A'){
+            else if (input == 'a' || input == 'A'){
                 carLeft();
-                lastKey = timeRun;
             }
-            else if (buffer[0] == 's' || buffer[0] == 'S'){
+            else if (input == 's' || input == 'S'){
                 carBackward();
-                lastKey = timeRun;
             }
-            else if (buffer[0] == 'd' || buffer[0] == 'D'){
+            else if (input == 'd' || input == 'D'){
                 carRight();
-                lastKey = timeRun;
+            }
+            else{
+                continue;
             }
         }
         if (timeRun - lastKey > TIMEOUT){
-            // if the time since the last key is > timeout then forcefully stop the car
-            //NTS: once the distnace sensor is coded
             carStop();
         }
         vTaskDelay(LOOP_DELAY / portTICK_PERIOD_MS);
