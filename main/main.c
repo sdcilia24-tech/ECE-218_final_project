@@ -24,16 +24,17 @@
 #define TRIGGER 11
 #define ECHOPIN 12
 #define ALARM GPIO_NUM_8
-#define distanceThreshold 20
+#define distanceThreshold 10
 esp_timer_handle_t oneshotTimer;
-int pulseWidth = 0;
-int timeHigh = 0;
-int timeLow = 0; 
+volatile int pulseWidth = 0;
+volatile int timeHigh = 0;
+volatile int timeLow = 0; 
 #define CONVFACTOR 58
 
 //other constants
 #define LOOP_DELAY 25
 #define TIMEOUT 550
+volatile int errorCheck = 0;
 
 /**
  * defines an interrupt that will force the Trigger Pin low
@@ -92,6 +93,7 @@ void carLeft(void){
     ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_MAX);
     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT);
 }
+
 /**
  * Defines a function that will turn the car left by utilizing a "tank turn" where the Right wheel
  * moves backward while the left wheel moves forward
@@ -109,7 +111,6 @@ void carRight(void){
 /**
  * defines an interrupt that will assign the current distance from the sensor to a nearby object
  * by taking the pulse width and defining it by a conversion factor
- * 
  * @arg void
  * @returns void 
  */
@@ -162,6 +163,12 @@ void ledcInit(void){
     ledc_timer_config(&ledcTimer);
 }
 
+/**
+ * defines a function that will initalize both the trigger and the echo pin for the 
+ * Adafruit ultrasonic sensor that will trigger via ISR.
+ * @arg void
+ * @returns void
+ */
 void distanceSensorInit(){
     gpio_reset_pin(TRIGGER);
     gpio_set_direction(TRIGGER, GPIO_MODE_OUTPUT);
@@ -182,39 +189,52 @@ void distanceSensorInit(){
     esp_timer_create(&oneshot_timer_args, &oneshotTimer);
 }
 
+/**
+ * defines a function that will compare the distance between the ultrasonic sensor
+ * and the threhold, and if there are ten consecutive readings below the threshold,
+ * stop, sound an alarm, and put the car in reverse until the car is out of range of teh object
+ * @arg void
+ * @returns void
+ */
+void distanceCheck(void){
+    if (pulseWidth < distanceThreshold){
+            errorCheck++;
+        }
+    else{
+        errorCheck = 0;
+    }
+    if (errorCheck >= 10){
+        carStop();
+        int delayAlarm = esp_timer_get_time() / 1000;
+        while(pulseWidth <= distanceThreshold + 5){
+            if ((esp_timer_get_time() / 1000) - delayAlarm >= 250){
+                gpio_set_level(ALARM, 0);
+            }
+            esp_timer_start_once(oneshotTimer, 10);
+            gpio_set_level(TRIGGER, 1);
+            carBackward();
+            vTaskDelay(LOOP_DELAY / portTICK_PERIOD_MS);
+        }
+        carStop();
+        gpio_set_level(ALARM, 0);
+        errorCheck = 0;
+    }
+}
+
 void app_main(void){
     ledcInit();
     distanceSensorInit();
     usb_serial_jtag_driver_config_t usbConfig = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&usbConfig);
     esp_vfs_usb_serial_jtag_use_driver();
-    int input;
+    char input;
     int lastKey = 0;
-    int errorCheck = 0;
     while(1){
         int currentData = usb_serial_jtag_read_bytes(&input, 1, 0);
         uint64_t timeRun = esp_timer_get_time() / 1000; // checks to see when the last key press is in milliseconds
-        esp_timer_start_once(oneshotTimer, 1e-6);
+        esp_timer_start_once(oneshotTimer, 10);
         gpio_set_level(TRIGGER, 1);
-        printf("%d\n", pulseWidth);
-        /*
-        if (pulseWidth < distanceThreshold){
-            errorCheck++;
-            if (errorCheck > 10){
-                carStop();
-                gpio_set_level(ALARM, 1);
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                gpio_set_level(ALARM, 0);
-                if (pulseWidth < distanceThreshold + 10){
-                        carBackward();
-                    vTaskDelay(250 / portTICK_PERIOD_MS);
-                }
-            }
-        }
-        else{
-            errorCheck = 0;
-        }
-         */
+        distanceCheck();
         if (currentData > 0){
             lastKey = timeRun;
             if (input == 'w' || input == 'W'){
