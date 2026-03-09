@@ -20,10 +20,17 @@
 #define LEDC_DUTY_STOPPED 614
 #define LEDC_DUTY_MAX 922
 
+//Headlights
+#define HEADLIGHTS_IO 17
+#define HEADLIGHT_CHANNEL LEDC_CHANNEL_2
+#define HEADLIGHTS_MAX 8191
+#define BRIGHTNESS 1024
+
+
 //distance sensor
 #define TRIGGER 11
 #define ECHOPIN 12
-#define ALARM GPIO_NUM_8
+#define ALARM 7
 #define distanceThreshold 10
 esp_timer_handle_t oneshotTimer;
 volatile int pulseWidth = 0;
@@ -158,6 +165,16 @@ void ledcInit(void){
         .duty = LEDC_DUTY_STOPPED,
         .hpoint = 0
     };
+    ledc_channel_config_t ledcHeadlights = {
+        .speed_mode = LEDC_MODE,
+        .channel = HEADLIGHT_CHANNEL,
+        .timer_sel = LEDC_TIMER,
+        .intr_type = LEDC_INTR_DISABLE,
+        .gpio_num = HEADLIGHTS_IO,
+        .duty = 0,
+        .hpoint = 0,
+    };
+    ledc_channel_config(&ledcHeadlights);
     ledc_channel_config(&ledcChannelLeft);
     ledc_channel_config(&ledcChannelRight);
     ledc_timer_config(&ledcTimer);
@@ -205,11 +222,8 @@ void distanceCheck(void){
     }
     if (errorCheck >= 10){
         carStop();
-        int delayAlarm = esp_timer_get_time() / 1000;
+        gpio_set_level(ALARM, 1);
         while(pulseWidth <= distanceThreshold + 5){
-            if ((esp_timer_get_time() / 1000) - delayAlarm >= 250){
-                gpio_set_level(ALARM, 0);
-            }
             esp_timer_start_once(oneshotTimer, 10);
             gpio_set_level(TRIGGER, 1);
             carBackward();
@@ -222,6 +236,9 @@ void distanceCheck(void){
 }
 
 void app_main(void){
+    gpio_reset_pin(ALARM);
+    gpio_set_direction(ALARM, GPIO_MODE_OUTPUT);
+    gpio_set_level(ALARM, 0);
     ledcInit();
     distanceSensorInit();
     usb_serial_jtag_driver_config_t usbConfig = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
@@ -229,6 +246,7 @@ void app_main(void){
     esp_vfs_usb_serial_jtag_use_driver();
     char input;
     int lastKey = 0;
+    int headlightLevel = 0;
     while(1){
         int currentData = usb_serial_jtag_read_bytes(&input, 1, 0);
         uint64_t timeRun = esp_timer_get_time() / 1000; // checks to see when the last key press is in milliseconds
@@ -237,6 +255,20 @@ void app_main(void){
         distanceCheck();
         if (currentData > 0){
             lastKey = timeRun;
+            if (input == 'c' || input == 'C'){
+                if (headlightLevel < 8191){
+                    headlightLevel += BRIGHTNESS;
+                }
+                ledc_set_duty(LEDC_MODE, HEADLIGHT_CHANNEL, headlightLevel);
+                ledc_update_duty(LEDC_MODE, HEADLIGHT_CHANNEL);
+            }
+            if (input == 'v' || input == 'V'){
+                if (headlightLevel > 0){
+                    headlightLevel -= BRIGHTNESS;
+                }
+                ledc_set_duty(LEDC_MODE, HEADLIGHT_CHANNEL, headlightLevel);
+                ledc_update_duty(LEDC_MODE, HEADLIGHT_CHANNEL);
+            }
             if (input == 'w' || input == 'W'){
                 carForward();
             }
