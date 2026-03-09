@@ -31,7 +31,7 @@
 #define TRIGGER 11
 #define ECHOPIN 12
 #define ALARM 7
-#define distanceThreshold 10
+#define distanceThreshold 5
 esp_timer_handle_t oneshotTimer;
 volatile int pulseWidth = 0;
 volatile int timeHigh = 0;
@@ -42,6 +42,7 @@ volatile int timeLow = 0;
 #define LOOP_DELAY 25
 #define TIMEOUT 550
 volatile int errorCheck = 0;
+#define TOTAL_BITS 8191
 
 /**
  * defines an interrupt that will force the Trigger Pin low
@@ -256,7 +257,7 @@ void app_main(void){
         if (currentData > 0){
             lastKey = timeRun;
             if (input == 'c' || input == 'C'){
-                if (headlightLevel < 8191){
+                if (headlightLevel < TOTAL_BITS){
                     headlightLevel += BRIGHTNESS;
                 }
                 ledc_set_duty(LEDC_MODE, HEADLIGHT_CHANNEL, headlightLevel);
