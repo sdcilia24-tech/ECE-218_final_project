@@ -1,6 +1,6 @@
 **General OverView:**
 
-	For this project, we wanted to build upon the driver's Ed car system that we had worked on in previous projects. For this project,
+For this project, we wanted to build upon the driver's Ed car system that we had worked on in previous projects. For this project,
   we designed a way for student drivers to practice their skills before getting behind the wheel of a real vehicle. We wanted a car model that could actually drive. 
   This allows them to practice their driving skills in a safe and low-risk environment. We wanted to implement safety features that would be beneficial to a new driver. 
   This would allow new drivers to practice with real safety features found in modern vehicles. We choose to use continuous servo motors to drive and steer the car, 
