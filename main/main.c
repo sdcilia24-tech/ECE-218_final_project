@@ -26,12 +26,11 @@
 #define HEADLIGHTS_MAX 8191
 #define BRIGHTNESS 1024
 
-
 //distance sensor
 #define TRIGGER 11
 #define ECHOPIN 12
 #define ALARM 7
-#define distanceThreshold 5
+#define distanceThreshold 10
 esp_timer_handle_t oneshotTimer;
 volatile int pulseWidth = 0;
 volatile int timeHigh = 0;
@@ -42,6 +41,7 @@ volatile int timeLow = 0;
 #define LOOP_DELAY 25
 #define TIMEOUT 550
 volatile int errorCheck = 0;
+volatile int headlightLevel = 0;
 #define TOTAL_BITS 8191
 
 /**
@@ -98,7 +98,7 @@ void carStop(void){
 void carLeft(void){
     ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_LEFT, LEDC_DUTY_MIN);
     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_LEFT);   
-    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_MAX);
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_MIN);
     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT);
 }
 
@@ -111,7 +111,7 @@ void carLeft(void){
 void carRight(void){
     ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_LEFT, LEDC_DUTY_MAX);
     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_LEFT);   
-    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_MIN);
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT, LEDC_DUTY_MAX);
     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RIGHT);
 
 }
@@ -136,7 +136,7 @@ void IRAM_ATTR distanceSensorHandler(void *arg){
 
 /**
  * Defines a function that will configure the LEDC timer, and both channels for the left and right 
- * wheels of the robot
+ * wheels of the robot as well as configuring the variable headlights on the car
  * @arg void
  * @returns void
  */
@@ -221,7 +221,7 @@ void distanceCheck(void){
     else{
         errorCheck = 0;
     }
-    if (errorCheck >= 10){
+    if (errorCheck >= 5){
         carStop();
         gpio_set_level(ALARM, 1);
         while(pulseWidth <= distanceThreshold + 5){
@@ -233,6 +233,51 @@ void distanceCheck(void){
         carStop();
         gpio_set_level(ALARM, 0);
         errorCheck = 0;
+    }
+}
+/**
+ * defines a function that will adjust the level of the headlights on the car ranging from 
+ * an off setting all the way up to the maximum.
+ * @arg input: a character that is read from the keyboard
+ * @returns void
+ */
+void headLightAdjust(char input){
+    if (input == 'c' || input == 'C'){
+        if (headlightLevel < TOTAL_BITS){
+            headlightLevel += BRIGHTNESS;
+    }
+    ledc_set_duty(LEDC_MODE, HEADLIGHT_CHANNEL, headlightLevel);
+    ledc_update_duty(LEDC_MODE, HEADLIGHT_CHANNEL);
+}
+    if (input == 'v' || input == 'V'){
+        if (headlightLevel > 0){
+            headlightLevel -= BRIGHTNESS;
+    }
+    ledc_set_duty(LEDC_MODE, HEADLIGHT_CHANNEL, headlightLevel);
+    ledc_update_duty(LEDC_MODE, HEADLIGHT_CHANNEL);
+    }
+}
+/**
+ * defines a function that updates the current movement of the car, and will call several functions
+ * whose documentation is provided in this file, to update based on the input
+ * @arg input: character read from the keyboard
+ * @returns void
+ */
+void movementUpdate(char input){
+    if (input == 'w' || input == 'W'){
+        carForward();
+    }
+    else if (input == 'a' || input == 'A'){
+        carLeft();
+    }
+    else if (input == 's' || input == 'S'){
+        carBackward();
+    }
+    else if (input == 'd' || input == 'D'){
+        carRight();
+    }
+    else{
+        return;
     }
 }
 
@@ -247,7 +292,6 @@ void app_main(void){
     esp_vfs_usb_serial_jtag_use_driver();
     char input;
     int lastKey = 0;
-    int headlightLevel = 0;
     while(1){
         int currentData = usb_serial_jtag_read_bytes(&input, 1, 0);
         uint64_t timeRun = esp_timer_get_time() / 1000; // checks to see when the last key press is in milliseconds
@@ -256,35 +300,8 @@ void app_main(void){
         distanceCheck();
         if (currentData > 0){
             lastKey = timeRun;
-            if (input == 'c' || input == 'C'){
-                if (headlightLevel < TOTAL_BITS){
-                    headlightLevel += BRIGHTNESS;
-                }
-                ledc_set_duty(LEDC_MODE, HEADLIGHT_CHANNEL, headlightLevel);
-                ledc_update_duty(LEDC_MODE, HEADLIGHT_CHANNEL);
-            }
-            if (input == 'v' || input == 'V'){
-                if (headlightLevel > 0){
-                    headlightLevel -= BRIGHTNESS;
-                }
-                ledc_set_duty(LEDC_MODE, HEADLIGHT_CHANNEL, headlightLevel);
-                ledc_update_duty(LEDC_MODE, HEADLIGHT_CHANNEL);
-            }
-            if (input == 'w' || input == 'W'){
-                carForward();
-            }
-            else if (input == 'a' || input == 'A'){
-                carLeft();
-            }
-            else if (input == 's' || input == 'S'){
-                carBackward();
-            }
-            else if (input == 'd' || input == 'D'){
-                carRight();
-            }
-            else{
-                continue;
-            }
+            headLightAdjust(input);
+            movementUpdate(input);
         }
         if (timeRun - lastKey > TIMEOUT){
             carStop();
