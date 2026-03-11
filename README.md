@@ -16,7 +16,7 @@ Necessary Hardware
 * Micro-USB to USBC cable
 * 6V Battery Pack
 * Adafruit Ultrasonic Distance Sensor
-* 
+  
   To start on the hardware, we first wired all four servo motors in parallel with the 6V battery pack in order to maintain the voltage
 needed to drive each of the servo motors. We then independently wired two of the servo motors to one ADC channel, and then the other two servos to their own LEDC channel,
 so we can have control over each side of the car (for the tank turning feature). The two servos on the left were wired together, and the two on the right were wired together. We then wired another LEDC channel to the headlights at the front of the car, so that we would be able to control the headlights with keyboard inputs.
